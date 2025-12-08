@@ -10,7 +10,6 @@ let getPeerNicknamesDep, localGeneratedPeerIdDep, getIsHostDep;
 let documentsSection, documentListDiv, newDocBtn, renameDocBtn, deleteDocBtn, collaborativeEditor;
 let docBoldBtn, docItalicBtn, docUnderlineBtn, docUlBtn, docOlBtn, downloadTxtBtn, printDocBtn;
 
-
 function selectDocumentDomElements() {
     documentsSection = document.getElementById('documentsSection');
     documentListDiv = document.getElementById('documentList');
@@ -25,6 +24,16 @@ function selectDocumentDomElements() {
     docOlBtn = document.getElementById('docOlBtn');
     downloadTxtBtn = document.getElementById('downloadTxtBtn');
     printDocBtn = document.getElementById('printDocBtn');
+}
+
+function generateUUID() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
 }
 
 function escapeHtml(unsafe) {
@@ -74,11 +83,15 @@ function printCurrentDocument() {
     const printDocument = printFrame.contentDocument || printFrame.contentWindow.document;
     
     printDocument.open();
+    // SECURITY: Sanitized HTML content before outputting to print frame
+    const sanitizedName = escapeHtml(activeDoc.name);
+    const sanitizedContent = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(activeDoc.htmlContent) : activeDoc.htmlContent;
+
     printDocument.write(`
         <!DOCTYPE html>
         <html>
         <head>
-            <title>${escapeHtml(activeDoc.name)}</title>
+            <title>${sanitizedName}</title>
             <style>
                 @page { margin: 0.5in; }
                 body { 
@@ -91,8 +104,8 @@ function printCurrentDocument() {
             </style>
         </head>
         <body>
-            <h1>${escapeHtml(activeDoc.name)}</h1>
-            ${activeDoc.htmlContent}
+            <h1>${sanitizedName}</h1>
+            ${sanitizedContent}
         </body>
         </html>
     `);
@@ -174,9 +187,13 @@ export function renderDocumentsIfActive(force = false) {
 function renderDocumentList() {
     if (!documentListDiv) return;
     documentListDiv.innerHTML = '';
+    
+    // Auto-create document if host and list is empty
     if (documents.length === 0 && getIsHostDep && getIsHostDep() && sendCreateDocumentDep) {
-       
+        ensureDefaultDocument();
+        return;
     }
+
     documents.forEach(doc => {
         const docItem = document.createElement('span');
         docItem.classList.add('document-list-item'); docItem.textContent = doc.name; docItem.dataset.documentId = doc.id;
@@ -221,7 +238,8 @@ function setActiveDocument(documentId) {
 function uiActionCreateNewDocument(defaultName = null, defaultContent = null, broadcast = true) {
     const docName = defaultName || prompt("Enter name for the new document:", `Document ${documents.length + 1}`);
     if (!docName) return;
-    const newDoc = { id: `doc-${Date.now()}-${Math.random().toString(36).substring(2,7)}`, name: docName, htmlContent: defaultContent || '<p>Start typing...</p>' };
+    // UUID for Document
+    const newDoc = { id: generateUUID(), name: docName, htmlContent: defaultContent || '<p>Start typing...</p>' };
     documents.push(newDoc); 
     setActiveDocument(newDoc.id); 
     if (broadcast && sendCreateDocumentDep) {

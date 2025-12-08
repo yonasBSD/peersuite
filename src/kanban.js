@@ -15,13 +15,16 @@ function selectKanbanDomElements() {
     addColumnBtn = document.getElementById('addColumnBtn');
 }
 
-function escapeHtml(unsafe) {
-    return unsafe
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+// Helper for generating UUIDs
+function generateUUID() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    // Fallback for older environments
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
 }
 
 export function initKanbanFeatures(dependencies) {
@@ -52,6 +55,7 @@ export function initKanbanFeatures(dependencies) {
     };
 }
 
+// SECURITY NOTE: using document.createElement prevents XSS
 export function renderKanbanBoard() {
     if (!kanbanBoard) return;
     kanbanBoard.innerHTML = '';
@@ -61,72 +65,126 @@ export function renderKanbanBoard() {
         const columnDiv = document.createElement('div');
         columnDiv.classList.add('kanban-column');
         columnDiv.dataset.columnId = column.id;
-        
-        let cardsHtml = (column.cards || []).map(card => {
-            const cardPriority = card.priority || 1;
-            const escapedText = escapeHtml(card.text);
-            return `
-                <div class="kanban-card priority-${cardPriority}" draggable="true" data-card-id="${card.id}" data-parent-column-id="${column.id}" data-priority="${cardPriority}">
-                    <div class="kanban-card-content">
-                        <p>${escapedText}</p>
-                        <select class="kanban-card-priority" data-card-id="${card.id}" data-column-id="${column.id}">
-                            <option value="1" ${cardPriority == 1 ? 'selected' : ''}>Low</option>
-                            <option value="2" ${cardPriority == 2 ? 'selected' : ''}>Medium</option>
-                            <option value="3" ${cardPriority == 3 ? 'selected' : ''}>High</option>
-                            <option value="4" ${cardPriority == 4 ? 'selected' : ''}>Critical</option>
-                        </select>
-                    </div>
-                    <button class="delete-card-btn" data-card-id="${card.id}" data-column-id="${column.id}" title="Delete card">❌</button>
-                </div>`;
-        }).join('');
 
-        let addCardSectionHtml = '';
+        const header = document.createElement('h3');
+        header.textContent = column.title;
+        
+        const deleteColBtn = document.createElement('button');
+        deleteColBtn.classList.add('delete-column-btn');
+        deleteColBtn.dataset.columnId = column.id;
+        deleteColBtn.title = "Delete column";
+        deleteColBtn.textContent = "🗑️";
+        deleteColBtn.addEventListener('click', () => handleDeleteKanbanColumn(column.id));
+        header.appendChild(deleteColBtn);
+        
+        columnDiv.appendChild(header);
+
+        const cardsContainer = document.createElement('div');
+        cardsContainer.classList.add('kanban-cards');
+
+        (column.cards || []).forEach(card => {
+            const cardPriority = card.priority || 1;
+            
+            const cardDiv = document.createElement('div');
+            cardDiv.classList.add('kanban-card', `priority-${cardPriority}`);
+            cardDiv.draggable = true;
+            cardDiv.dataset.cardId = card.id;
+            cardDiv.dataset.parentColumnId = column.id;
+            cardDiv.dataset.priority = cardPriority;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.classList.add('kanban-card-content');
+
+            const p = document.createElement('p');
+            p.textContent = card.text; 
+            contentDiv.appendChild(p);
+
+            const prioritySelect = document.createElement('select');
+            prioritySelect.classList.add('kanban-card-priority');
+            prioritySelect.dataset.cardId = card.id;
+            prioritySelect.dataset.columnId = column.id;
+            
+            const priorities = [
+                { val: 1, label: 'Low' },
+                { val: 2, label: 'Medium' },
+                { val: 3, label: 'High' },
+                { val: 4, label: 'Critical' }
+            ];
+
+            priorities.forEach(prio => {
+                const option = document.createElement('option');
+                option.value = prio.val;
+                option.textContent = prio.label;
+                if (cardPriority == prio.val) option.selected = true;
+                prioritySelect.appendChild(option);
+            });
+
+            prioritySelect.addEventListener('change', (e) => handleUpdateCardPriority(column.id, card.id, e.target.value));
+            contentDiv.appendChild(prioritySelect);
+            cardDiv.appendChild(contentDiv);
+
+            const deleteCardBtn = document.createElement('button');
+            deleteCardBtn.classList.add('delete-card-btn');
+            deleteCardBtn.dataset.cardId = card.id;
+            deleteCardBtn.dataset.columnId = column.id;
+            deleteCardBtn.title = "Delete card";
+            deleteCardBtn.textContent = "❌";
+            deleteCardBtn.addEventListener('click', () => handleDeleteKanbanCard(column.id, card.id));
+            cardDiv.appendChild(deleteCardBtn);
+
+            cardDiv.addEventListener('dragstart', handleKanbanDragStart);
+            cardDiv.addEventListener('dragend', handleKanbanDragEnd);
+
+            cardsContainer.appendChild(cardDiv);
+        });
+
+        columnDiv.appendChild(cardsContainer);
+
         if (column.id === kanbanCurrentlyAddingCardToColumnId) {
-            addCardSectionHtml = `
-                <div class="add-card-form">
-                    <textarea class="new-card-text-input" placeholder="Enter card text..."></textarea>
-                    <div class="add-card-form-actions">
-                        <button class="save-new-card-btn" data-column-id="${column.id}">Save Card</button>
-                        <button class="cancel-add-card-btn" data-column-id="${column.id}">Cancel</button>
-                    </div>
-                </div>`;
+            const formDiv = document.createElement('div');
+            formDiv.classList.add('add-card-form');
+
+            const textarea = document.createElement('textarea');
+            textarea.classList.add('new-card-text-input');
+            textarea.placeholder = "Enter card text...";
+            formDiv.appendChild(textarea);
+
+            const actionsDiv = document.createElement('div');
+            actionsDiv.classList.add('add-card-form-actions');
+
+            const saveBtn = document.createElement('button');
+            saveBtn.classList.add('save-new-card-btn');
+            saveBtn.dataset.columnId = column.id;
+            saveBtn.textContent = "Save Card";
+            saveBtn.addEventListener('click', () => handleSaveNewCard(column.id));
+            
+            const cancelBtn = document.createElement('button');
+            cancelBtn.classList.add('cancel-add-card-btn');
+            cancelBtn.dataset.columnId = column.id;
+            cancelBtn.textContent = "Cancel";
+            cancelBtn.addEventListener('click', handleCancelAddCard);
+
+            actionsDiv.appendChild(saveBtn);
+            actionsDiv.appendChild(cancelBtn);
+            formDiv.appendChild(actionsDiv);
+            columnDiv.appendChild(formDiv);
+
+            setTimeout(() => textarea.focus(), 0);
         } else {
-            addCardSectionHtml = `<button class="add-card-btn" data-column-id="${column.id}">+ Add Card</button>`;
+            const addCardBtn = document.createElement('button');
+            addCardBtn.classList.add('add-card-btn');
+            addCardBtn.dataset.columnId = column.id;
+            addCardBtn.textContent = "+ Add Card";
+            addCardBtn.addEventListener('click', () => handleShowAddCardForm(column.id));
+            columnDiv.appendChild(addCardBtn);
         }
 
-        columnDiv.innerHTML = `
-            <h3>${escapeHtml(column.title)}<button class="delete-column-btn" data-column-id="${column.id}" title="Delete column">🗑️</button></h3>
-            <div class="kanban-cards">${cardsHtml}</div>
-            ${addCardSectionHtml}`;
+        columnDiv.addEventListener('dragover', handleKanbanDragOver);
+        columnDiv.addEventListener('dragleave', handleKanbanDragLeave);
+        columnDiv.addEventListener('drop', handleKanbanDrop);
+
         kanbanBoard.appendChild(columnDiv);
     });
-
-    // Event Listeners
-    kanbanBoard.querySelectorAll('.add-card-btn').forEach(btn => btn.addEventListener('click', () => handleShowAddCardForm(btn.dataset.columnId)));
-    kanbanBoard.querySelectorAll('.save-new-card-btn').forEach(btn => btn.addEventListener('click', () => handleSaveNewCard(btn.dataset.columnId)));
-    kanbanBoard.querySelectorAll('.cancel-add-card-btn').forEach(btn => btn.addEventListener('click', () => handleCancelAddCard()));
-    
-    kanbanBoard.querySelectorAll('.delete-column-btn').forEach(btn => btn.addEventListener('click', () => handleDeleteKanbanColumn(btn.dataset.columnId)));
-    kanbanBoard.querySelectorAll('.delete-card-btn').forEach(btn => btn.addEventListener('click', () => handleDeleteKanbanCard(btn.dataset.columnId, btn.dataset.cardId)));
-    
-    kanbanBoard.querySelectorAll('.kanban-card-priority').forEach(selectEl => {
-        selectEl.addEventListener('change', (e) => handleUpdateCardPriority(e.target.dataset.columnId, e.target.dataset.cardId, e.target.value));
-    });
-
-    kanbanBoard.querySelectorAll('.kanban-card').forEach(card => {
-        card.addEventListener('dragstart', handleKanbanDragStart);
-        card.addEventListener('dragend', handleKanbanDragEnd);
-    });
-    kanbanBoard.querySelectorAll('.kanban-column').forEach(col => {
-        col.addEventListener('dragover', handleKanbanDragOver);
-        col.addEventListener('dragleave', handleKanbanDragLeave);
-        col.addEventListener('drop', handleKanbanDrop);
-    });
-
-    if (kanbanCurrentlyAddingCardToColumnId) {
-        const activeFormTextarea = kanbanBoard.querySelector(`.kanban-column[data-column-id="${kanbanCurrentlyAddingCardToColumnId}"] .new-card-text-input`);
-        if (activeFormTextarea) activeFormTextarea.focus();
-    }
 }
 
 export function renderKanbanBoardIfActive(force = false) {
@@ -139,21 +197,24 @@ export function renderKanbanBoardIfActive(force = false) {
 function handleKanbanDragStart(e) {
     draggedCardElement = e.target;
     const cardPriority = e.target.dataset.priority || 1;
+    const textP = e.target.querySelector('.kanban-card-content p');
     draggedCardData = {
         id: e.target.dataset.cardId,
         originalColumnId: e.target.dataset.parentColumnId,
-        text: e.target.querySelector('.kanban-card-content p') ? e.target.querySelector('.kanban-card-content p').textContent : '',
+        text: textP ? textP.textContent : '',
         priority: parseInt(cardPriority)
     };
     e.dataTransfer.setData('text/plain', e.target.dataset.cardId);
     e.dataTransfer.effectAllowed = 'move';
     setTimeout(() => { if(draggedCardElement) draggedCardElement.classList.add('dragging'); }, 0);
 }
+
 function handleKanbanDragEnd(e) {
     if(draggedCardElement) draggedCardElement.classList.remove('dragging');
     draggedCardElement = null; draggedCardData = null;
     if(kanbanBoard) kanbanBoard.querySelectorAll('.kanban-column.drag-over').forEach(col => col.classList.remove('drag-over'));
 }
+
 function handleKanbanDragOver(e) {
     e.preventDefault(); e.dataTransfer.dropEffect = 'move';
     const column = e.target.closest('.kanban-column');
@@ -162,10 +223,12 @@ function handleKanbanDragOver(e) {
         column.classList.add('drag-over');
     }
 }
+
 function handleKanbanDragLeave(e) {
     const column = e.target.closest('.kanban-column');
     if (column && !column.contains(e.relatedTarget)) column.classList.remove('drag-over');
 }
+
 function handleKanbanDrop(e) {
     e.preventDefault(); if (!draggedCardData) return;
     const targetColumnDiv = e.target.closest('.kanban-column');
@@ -196,7 +259,8 @@ function handleKanbanDrop(e) {
 function handleAddKanbanColumn() {
     if(!newColumnNameInput) return;
     const columnName = newColumnNameInput.value.trim(); if (!columnName) return;
-    const newColumn = { id: `col-${Date.now()}`, title: columnName, cards: [] };
+    // UUID for Column
+    const newColumn = { id: generateUUID(), title: columnName, cards: [] };
     if (!kanbanData.columns) kanbanData.columns = [];
     kanbanData.columns.push(newColumn);
     if (sendKanbanUpdateDep) sendKanbanUpdateDep({ type: 'addColumn', column: newColumn });
@@ -225,8 +289,9 @@ function handleSaveNewCard(columnId) {
 
     const column = kanbanData.columns.find(col => col.id === columnId);
     if (column) {
+        // UUID for Card
         const newCard = { 
-            id: `card-${Date.now()}-${Math.random().toString(36).substring(2,7)}`, 
+            id: generateUUID(),
             text: cardText,
             priority: 1
         };
@@ -267,6 +332,7 @@ function handleDeleteKanbanColumn(columnId) {
     renderKanbanBoard();
     if (getPeerNicknamesDep && Object.keys(getPeerNicknamesDep()).length > 0 && showNotificationDep) showNotificationDep('kanbanSection');
 }
+
 function handleDeleteKanbanCard(columnId, cardId) {
     if (!confirm("Delete card?")) return;
     const column = kanbanData.columns.find(col => col.id === columnId);

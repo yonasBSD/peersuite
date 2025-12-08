@@ -77,6 +77,7 @@ let peerNicknames = {};
 let isHost = false;
 let importedWorkspaceState = null;
 
+// Theme State
 let availableThemes = [];
 let themeDisplayNames = {};
 let currentThemeIndex = 0;
@@ -120,49 +121,43 @@ function escapeHtml(unsafe) {
 async function fetchThemesConfig() {
     try {
         const response = await fetch('themes/themes.json');
-        if (!response.ok) {
-            console.warn(`themes.json not found (status: ${response.status}). Defaulting to 'light' theme.`);
-            availableThemes = ['light'];
-            themeDisplayNames['light'] = 'Light';
-            return;
-        }
+        if (!response.ok) throw new Error("Themes file not found");
         const themeConfigs = await response.json();
         
-        if (!Array.isArray(themeConfigs) || themeConfigs.length === 0) {
-            console.error("themes.json is empty or not a valid array. Defaulting to 'light' theme.");
-            availableThemes = ['light'];
-            themeDisplayNames['light'] = 'Light';
-            return;
-        }
+        availableThemes = [];
+        themeDisplayNames = {};
         
-        availableThemes = themeConfigs.map(t => t.id).filter(id => typeof id === 'string');
-        themeConfigs.forEach(t => {
-            if (typeof t.id === 'string' && typeof t.name === 'string') {
-                themeDisplayNames[t.id] = t.name;
-            }
-        });
+        if (Array.isArray(themeConfigs)) {
+            themeConfigs.forEach(t => {
+                if (t.id && t.name) {
+                    availableThemes.push(t.id);
+                    themeDisplayNames[t.id] = t.name;
+                }
+            });
+        }
 
         if (availableThemes.length === 0) {
-            console.error("No valid themes found in themes.json. Defaulting to 'light' theme.");
-            availableThemes = ['light'];
-            themeDisplayNames['light'] = 'Light';
+            // Fallback defaults
+            availableThemes = ['light', 'dark'];
+            themeDisplayNames = { 'light': 'Light', 'dark': 'Dark' };
         }
     } catch (error) {
-        console.error("Could not load or parse themes configuration (themes/themes.json):", error);
-        availableThemes = ['light'];
-        themeDisplayNames['light'] = 'Light';
+        console.warn("Could not load themes.json, using defaults.", error);
+        availableThemes = ['light', 'dark'];
+        themeDisplayNames = { 'light': 'Light', 'dark': 'Dark' };
     }
 }
 
 async function loadSettings() {
-    await fetchThemesConfig(); 
+    // 1. Load Themes Config First
+    await fetchThemesConfig();
 
+    // 2. Set default if not set
     if (!peerSuiteSettings.theme && availableThemes.length > 0) {
         peerSuiteSettings.theme = availableThemes[0];
-    } else if (availableThemes.length === 0) {
-        peerSuiteSettings.theme = 'light'; // Absolute fallback
     }
 
+    // 3. Load from LocalStorage
     const savedSettings = localStorage.getItem('peerSuiteAppSettings');
     if (savedSettings) {
         try {
@@ -170,7 +165,7 @@ async function loadSettings() {
             if (availableThemes.includes(parsedSettings.theme)) {
                 peerSuiteSettings.theme = parsedSettings.theme;
             } else {
-                console.warn(`Saved theme "${parsedSettings.theme}" is not in available themes. Using default: "${peerSuiteSettings.theme}".`);
+                console.warn(`Saved theme "${parsedSettings.theme}" invalid. Using: "${peerSuiteSettings.theme}".`);
             }
             peerSuiteSettings.videoFlip = typeof parsedSettings.videoFlip === 'boolean' ? parsedSettings.videoFlip : false;
             peerSuiteSettings.pttEnabled = typeof parsedSettings.pttEnabled === 'boolean' ? parsedSettings.pttEnabled : false;
@@ -182,25 +177,22 @@ async function loadSettings() {
         }
     }
     
+    // 4. Update Index for Cycling
     currentThemeIndex = availableThemes.indexOf(peerSuiteSettings.theme);
     if (currentThemeIndex === -1) {
         currentThemeIndex = 0;
-        if (availableThemes.length > 0) peerSuiteSettings.theme = availableThemes[0];
-      }
+        peerSuiteSettings.theme = availableThemes[0];
+    }
 
+    // 5. Apply Settings
     populateSettingsSection();
-    if (peerSuiteSettings.theme) {
-      applyTheme(peerSuiteSettings.theme);
-    }
+    applyTheme(peerSuiteSettings.theme);
 
-    if (window.mediaModuleRef && window.mediaModuleRef.setLocalVideoFlip) {
-        window.mediaModuleRef.setLocalVideoFlip(peerSuiteSettings.videoFlip);
-    }
-    if (window.mediaModuleRef && window.mediaModuleRef.updatePttSettings) {
-        window.mediaModuleRef.updatePttSettings(peerSuiteSettings.pttEnabled, peerSuiteSettings.pttKey, peerSuiteSettings.pttKeyDisplay);
-    }
-    if (window.mediaModuleRef && window.mediaModuleRef.setGlobalVolume) {
-        window.mediaModuleRef.setGlobalVolume(peerSuiteSettings.globalVolume, false);
+    // Apply Media Settings (if module ready, otherwise it picks up on init)
+    if (window.mediaModuleRef) {
+        if (window.mediaModuleRef.setLocalVideoFlip) window.mediaModuleRef.setLocalVideoFlip(peerSuiteSettings.videoFlip);
+        if (window.mediaModuleRef.updatePttSettings) window.mediaModuleRef.updatePttSettings(peerSuiteSettings.pttEnabled, peerSuiteSettings.pttKey, peerSuiteSettings.pttKeyDisplay);
+        if (window.mediaModuleRef.setGlobalVolume) window.mediaModuleRef.setGlobalVolume(peerSuiteSettings.globalVolume, false);
     }
 }
 
@@ -290,14 +282,10 @@ if (settingsGlobalVolumeSlider && globalVolumeValue) {
 }
 
 function applyTheme(themeName) {
-    if (availableThemes.length === 0) {
-        console.error("No themes available. Cannot apply theme.");
-        document.documentElement.setAttribute('data-theme', 'light');
-        if (currentThemeNameSpan) currentThemeNameSpan.textContent = "Light";
-        return;
-    }
+    if (availableThemes.length === 0) return;
+    
+    // Validation
     if (!availableThemes.includes(themeName)) {
-        console.warn(`Theme "${themeName}" not available. Defaulting to "${availableThemes[0]}".`);
         themeName = availableThemes[0];
     }
 
@@ -308,24 +296,20 @@ function applyTheme(themeName) {
         if (currentHref !== newHref) {
             themeStylesheetLink.setAttribute('href', newHref);
         }
-    } else {
-        console.error("Critical: Theme stylesheet link element not found.");
-        const newLink = document.createElement('link');
-        newLink.id = 'active-theme-stylesheet'; newLink.rel = 'stylesheet';
-        newLink.href = `themes/${themeName}.css`; document.head.appendChild(newLink);
     }
 
     document.documentElement.setAttribute('data-theme', themeName);
     peerSuiteSettings.theme = themeName;
+    
+    // Sync Index
     currentThemeIndex = availableThemes.indexOf(themeName);
-    if (currentThemeIndex === -1 && availableThemes.length > 0) currentThemeIndex = 0;
-
     saveSettings();
 
     if (currentThemeNameSpan) {
-        currentThemeNameSpan.textContent = themeDisplayNames[themeName] || themeName.charAt(0).toUpperCase() + themeName.slice(1);
+        currentThemeNameSpan.textContent = themeDisplayNames[themeName] || themeName;
     }
 
+    // Redraw artifacts if needed (e.g. whiteboard might use theme colors)
     const shareModule = window.shareModuleRef;
     if (shareModule && shareModule.redrawWhiteboardFromHistoryIfVisible) {
         shareModule.redrawWhiteboardFromHistoryIfVisible();
