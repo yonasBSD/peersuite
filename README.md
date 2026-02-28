@@ -1,6 +1,6 @@
 # Peersuite
 Peer to peer workspace
-
+ **CURRENTLY THE WEBSITE IS DOWN, I AM DISABLED AND ON A TIGHT BUDGET, DONATE TO RESTORE THE WEBSITE**
 ![Screenshot_2025-05-27_07-34-11](https://github.com/user-attachments/assets/6e197eff-dd5a-47dc-b69f-196911286f3b)
 
 We have an official chatroom for the project. Workspace deal-case-bear-face  Password is peersuite Come chat at https://peersuite.space
